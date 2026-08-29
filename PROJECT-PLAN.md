@@ -1,8 +1,8 @@
 # AssistNavigator — Project Plan
 
 A local-first web application that answers one question about a DoD standard, completely and
-auditably: **what is the full set of standards this document obliges me to meet, and which of them
-am I citing at the wrong revision?**
+auditably: **what is the full set of standards this document obliges me to meet, and where does the
+revision it cites differ from the current one?**
 
 **Companion documents**
 - [`docs/ASSIST-PROTOCOL.md`](docs/ASSIST-PROTOCOL.md) — the wire protocol, **verified against the
@@ -33,6 +33,25 @@ its current revision, and the revision your document actually cites. An engineer
 hand that list to a reviewer and defend every line of it — including the lines that say "we could not
 resolve this."
 
+### 2.1 What the tool does not decide
+
+A MIL-STD's Section 2 typically reads: *"the issues of these documents are those cited in the
+solicitation or contract."*
+
+**Neither the citing document nor ASSIST is the authority on which revision binds you — the contract
+is, and this tool cannot see your contract.** Confirmed during design review against the Section 2
+boilerplate.
+
+This constrains what completeness can honestly claim. The deliverable is a claim about *the set of
+documents*, never about which revision governs. So the tool reports and does not adjudicate: current
+revision downloaded by default, cited revision recorded on every edge, divergence shown plainly, and
+a one-click fetch of the cited revision when you want to read what your document actually pointed at.
+
+The divergence report (F7) must be worded accordingly. "You cite F; current is H(1)" is a fact worth
+surfacing, but it is not "you are citing the wrong revision" — for a contract that specifies F, F is
+correct and current is irrelevant. A report that blurs the two is worst exactly where it is used
+most: compliance review.
+
 Two things that look like the product are byproducts:
 
 - **Currency.** "You cite MIL-STD-810F; current is H(1)" falls out of the completeness data for
@@ -46,7 +65,7 @@ Two things that look like the product are byproducts:
 This ordering decides arguments. When graph aesthetics conflict with showing an unresolved
 reference, the unresolved reference wins.
 
-### 2.1 Two co-equal ways in
+### 2.2 Two co-equal ways in
 
 Documents enter the library by two paths, and neither is a fallback for the other:
 
@@ -94,8 +113,9 @@ document ID you can type.
   resolved, what was ambiguous, what is external, and what failed — with one-click manual
   resolution. This is not a report *about* the job; for a job defined as completeness, **it is the
   primary output.** The graph is the picture; this is the receipt.
-- **F7 — Staleness report.** Every edge whose cited revision is behind the target's current
+- **F7 — Divergence report.** Every edge whose cited revision differs from the target's current
   revision, as a standing list. The headline artefact users will actually paste into a review.
+  Worded as a difference, never as an error — which revision governs is the contract's call (§2.1).
 - **F8 — Citation graph.** Interactive, filterable, multiple layouts, click-to-navigate, with the
   graph and PDF viewer side by side. **Expand-one-level is the primary navigation gesture**, not a
   power-user extra (see §5).
@@ -103,8 +123,8 @@ document ID you can type.
 ### 4.2 Necessary supporting features
 
 - **F9 — Revision awareness.** Download the current revision by default; record the revision each
-  document actually cites; flag every divergence. See §8.5 for what this deliberately does *not*
-  include.
+  document actually cites; flag every divergence; fetch the cited revision in one click; and pin a
+  known governing revision where the contract specifies one (§8.5).
 - **F10 — External-document nodes.** Roughly a third of the references in a typical MIL-STD are
   non-government (ASTM, SAE, ISO). They cannot be downloaded, but they must appear in the graph and
   in the coverage report, or the completeness claim is a lie by omission.
@@ -288,22 +308,20 @@ Search, library, and import screens; PDF viewer with text layer, jump-to-page-an
 Section 2 outline sidebar; the Cytoscape graph with the encoding, layouts, filters, and interactions
 from ARCHITECTURE §8.2; the split-pane wiring so clicking an edge opens the citing PDF at the
 citation; the live crawl monitor; the coverage report with one-click manual resolution; and the
-**staleness report as a headline screen**, not a buried tab.
+**divergence report as a headline screen**, not a buried tab.
 
 Expand-one-level gets first-class treatment: `+N` badges, one-click expansion, no configuration.
 
-**Done when:** a user types `MIL-STD-129`, runs a depth-1 crawl, sees its coverage and staleness
+**Done when:** a user types `MIL-STD-129`, runs a depth-1 crawl, sees its coverage and divergence
 reports, expands two nodes one level each, and clicks an edge to land on the highlighted citation in
 the source PDF. **This is the MVP.**
 
 ---
 
-### Phase 8 — Export, corpus search, collections *(2 days)*
+### Phase 8 — Export, corpus search, pinning, collections *(2 days)*
 
 CSV / JSON / GraphML export, ZIP bundle with manifest, printable standards-package report, corpus
-full-text search, path explanation, collections, annotations.
-
-Revision pinning lands here if §8.5's re-evaluation says it should.
+full-text search, path explanation, revision pinning (§8.5), collections, annotations.
 
 ---
 
@@ -322,7 +340,7 @@ Text-level diff between two revisions of the same document.
 **Estimated MVP (Phases 0–7): ~17 working days. Full scope: ~22.**
 
 This is up from the previous plan's ~16-day MVP, not down. Moving OCR out of the critical path saves
-half a day and adding manual import costs one; promoting the coverage and staleness reports into the
+half a day and adding manual import costs one; promoting the coverage and divergence reports into the
 MVP costs another day between them. That is a real increase and it is the right trade: an MVP
 without manual import cannot be used on a restricted network at all, and an MVP without the coverage
 report ships a completeness tool whose completeness is unauditable.
@@ -342,8 +360,9 @@ report ships a completeness tool whose completeness is unauditable.
 
 ## 8. Decisions
 
-Flag any of these you want changed before code generation starts. §8.5 and §8.7 are calls made on
-your behalf when the design interview ran out of evidence; they are the two most worth reversing.
+Flag any of these you want changed before code generation starts. §8.5 and §8.7 were calls made on
+your behalf when the design interview ran out of evidence; §8.5 has since been reversed by a domain
+fact, and §8.7 remains the one most worth watching.
 
 ### 8.1 The job is completeness
 
@@ -370,27 +389,27 @@ the library may assume a document came from ASSIST.
 `depth_limit=1`, `max_docs=25`; depth 2 behind an explicit warning; expand-one-level as the intended
 navigation (§5).
 
-### 8.5 Revision authority: record and flag, but **do not pin** — *my call*
+### 8.5 Revision authority: record, flag, and **pin** — *reversed*
 
 Settled: download the current revision by default, record the revision each document actually cites,
-and flag every divergence. This is the staleness report and it is the highest-value output per unit
-of effort in the whole system.
+flag every divergence, and offer a one-click fetch of the cited revision.
 
-Cut: **revision pinning** — the ability to say "always resolve MIL-STD-810 to revision F for this
-project." It is a plausible-sounding feature with no evidence behind it. Nobody in the interview
-described needing it; it was proposed because it sounds like something a compliance tool should have.
-Building it now means a pinning UI, pin-aware resolution in the crawler, pin-vs-current conflict
-display in the graph, and a new class of "why did it download the wrong thing" bug — all for a
-workflow that may not exist.
+**Revision pinning is in**, reversing an earlier decision to cut it as speculative. That cut said:
+*"reverse this if a contract turns out to require holding a document at an old revision."* §2.1 is
+that evidence — Section 2's own boilerplate defers to "the issues cited in the solicitation or
+contract," so a contract specifying a revision is not a hypothetical edge case, it is the normal
+mechanism by which these documents bind anyone. A tool for compliance engineers that cannot express
+"this program is on MIL-STD-810F" is missing the case its users are in.
 
-What is kept is the **seam**: `revisions` already stores every known revision of a document, and the
-download endpoint already accepts an explicit `dmxid`. Adding pinning later is one nullable column on
-`documents` plus a branch in the resolver — under a day. The feature is cut; the ability to add it
-cheaply is not.
+Scope it small, because the original objection to it was sound: one nullable `pinned_revision_id` on
+`documents`, one branch in the resolver, and a pin control on the document panel. No pin-vs-current
+conflict UI beyond the divergence display that already exists — a pin is an assertion about the
+contract, not a claim that current is wrong. Phase 8.
 
-**Reverse this if:** in real use you find yourself repeatedly needing to hold a document at an
-old revision because a contract specifies it. That is the evidence that was missing. Phase 8 is where
-it would land.
+*Reversal record:* cut on the grounds that no one had described needing it; reinstated when the
+domain fact surfaced that contracts routinely specify revisions. The original reasoning was not
+wrong about the evidence available at the time, and the reversal condition was written down in
+advance precisely so this could be settled by a fact rather than an argument.
 
 ### 8.6 Manual import identifies documents by PDF header, not filename
 
@@ -438,6 +457,13 @@ which is what makes this project reasonable. The constraints that keep it that w
 requirements, not preferences:
 
 - Public endpoints only; no authentication bypass of any kind.
+- Recorded during design review, so the posture is a reasoned position rather than an unexamined
+  assumption: QuickSearch publishes **no API, no bulk data product, and no terms-of-use page** —
+  only a generic CFAA banner — and states **no rate limit**. Public unauthenticated documents,
+  fetched slowly and with honest client identification, are within normal use. The absence of a
+  stated limit is a reason to set our own conservatively, not a licence to go fast.
+- ASSIST updates nightly on business days, which is the ceiling on any update-monitoring cadence —
+  polling more often than daily buys nothing.
 - Rate limits and backoff enforced at one choke point, on by default, conservative.
 - The client identifies itself honestly.
 - Downloaded PDFs stay local; each retains its ASSIST provenance stamp.

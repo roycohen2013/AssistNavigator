@@ -90,9 +90,10 @@ documents (
                                     --  | restricted | failed
   resolution_note   TEXT,
   metadata_fetched_at TEXT,
-  created_at        TEXT NOT NULL
-  -- Revision pinning (PROJECT-PLAN §8.5) is deliberately absent. If it is ever needed it is one
-  -- nullable `pinned_revision_id` column here plus a branch in the resolver. Do not add it now.
+  created_at        TEXT NOT NULL,
+  -- The governing revision when the contract specifies one (PROJECT-PLAN §8.5). NULL means
+  -- "follow current". An assertion about the contract, not a claim that current is wrong.
+  pinned_revision_id INTEGER REFERENCES revisions(id)
 )
 
 -- One row per known revision of a document, from EITHER source.
@@ -393,7 +394,7 @@ file can never be dropped without a trace.
    create a `revisions` row with `source='import'`, `dmxid=NULL`.
 6. **Extract** via §5, unchanged. Move the original into `inbox/.processed/`.
 7. If online, optionally enrich the `documents` row from ASSIST metadata (status, current revision).
-   This is what lets an imported document appear in the staleness report — but it is strictly
+   This is what lets an imported document appear in the divergence report — but it is strictly
    optional, and every import step above works with no network at all.
 
 ### 6.5 OCR fallback *(Phase 9)*
@@ -419,6 +420,8 @@ All under `/api`. FastAPI generates OpenAPI; the frontend client is generated fr
   route would silently make imported documents unopenable.
 - `POST /documents/{canonical_id}/refresh` — re-check ASSIST for a newer revision
 - `POST /documents/{id}/resolve` — body `{ident_number}`, manual fix for an ambiguous ID
+- `PUT  /documents/{id}/pin` — body `{revision_id | null}`, set or clear the governing revision
+- `POST /refs/{id}/fetch-cited` — download the revision this edge actually cites, in one click
 
 **Import**
 - `POST /imports` — multipart upload, one or more PDFs (drag-and-drop path)
@@ -451,7 +454,8 @@ All under `/api`. FastAPI generates OpenAPI; the frontend client is generated fr
 **Corpus**
 - `GET  /fts?q=&limit=` — full-text search across downloaded PDFs, returns doc + page + snippet
 - `GET  /reports/coverage?crawl_id=` — resolved / unresolved / external / failed breakdown
-- `GET  /reports/staleness` — every edge whose `cited_revision` != target's `current_revision`
+- `GET  /reports/divergence` — every edge whose `cited_revision` != target's `current_revision`.
+  A difference, not a verdict: which revision governs is the contract's call (PROJECT-PLAN §2.1).
 - `POST /export` — body `{format: 'csv'|'json'|'graphml'|'zip'|'pdf-report', scope}`
 
 **Collections / annotations**: standard CRUD.
@@ -460,8 +464,8 @@ All under `/api`. FastAPI generates OpenAPI; the frontend client is generated fr
 
 ### 8.1 Layout
 
-Persistent left rail: Library, Graph, Crawls, **Import**, Search, **Coverage**, **Staleness**,
-Collections. Coverage and Staleness are top-level destinations, not tabs inside a Reports page —
+Persistent left rail: Library, Graph, Crawls, **Import**, Search, **Coverage**, **Divergence**,
+Collections. Coverage and Divergence are top-level destinations, not tabs inside a Reports page —
 they are the tool's primary outputs (PROJECT-PLAN §4.1). Import sits beside Crawls at equal weight,
 not under a "more" menu.
 
@@ -481,8 +485,10 @@ looking for them.
   about, and neither changes the node's standing in the graph.
 - Node size scaled by in-degree (how many documents depend on it).
 - Edge style: solid = `binding`, dotted = `informational`, double-line = `supersession`.
-- Edge colour: red when `cited_revision` is behind the target's `current_revision` (staleness is a
-  first-class visual, not a buried report).
+- Edge colour: amber when `cited_revision` differs from the target's `current_revision` — a
+  first-class visual, not a buried report. Amber, not red: a divergence is a fact to look at, not an
+  error, and it is correct whenever the contract specifies that revision (PROJECT-PLAN §2.1). An
+  edge to a pinned revision is drawn as matching, since a pin asserts the governing revision.
 - The root node is visually pinned and larger.
 
 **Layouts:** hierarchical by crawl depth (default), `fcose` force-directed, radial-from-root.
@@ -540,9 +546,11 @@ pdf.js with a real text layer (so the user can select and copy). Additional beha
 - **Coverage report:** every reference the crawl saw, in its bucket, with the buckets summing to the
   total (§6.3), and a one-click manual-resolve action for each ambiguous ID. Exportable as-is — it
   is the artefact a user hands a reviewer.
-- **Staleness report:** "MIL-STD-XXX cites MIL-STD-810F; current is H(1)" — a standing top-level
-  screen over the whole library, filterable by collection, sortable by how far behind each citation
-  is, and exportable. This is the output users will paste into a design review.
+- **Divergence report:** "MIL-STD-XXX cites MIL-STD-810F; current is H(1)" — a standing top-level
+  screen over the whole library, filterable by collection, sortable by how far apart the two
+  revisions are, and exportable. This is the output users will paste into a design review, so its
+  wording states the difference and stops there; it must never say or imply that the cited revision
+  is wrong (PROJECT-PLAN §2.1).
 
 ### 8.5 Accessibility and keyboard
 

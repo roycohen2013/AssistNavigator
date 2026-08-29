@@ -28,12 +28,31 @@ superseded, or you miss a binding requirement two hops down the citation chain.
 
 1. **Find** — search ASSIST by document ID, title, keywords, or scope.
 2. **Fetch** — download the PDF of the current (or any historical) revision to a local library.
+   Documents can also be **imported by hand**, from a watched folder or drag-and-drop, and get
+   identical treatment.
 3. **Follow** — parse the PDF, extract every referenced standard, resolve each against ASSIST, and
-   download them too, breadth-first to a chosen depth.
+   download them too, breadth-first, one level by default.
 4. **Navigate** — an interactive citation graph beside a PDF viewer. Clicking an edge opens the
    citing document at the exact page and highlights the citation.
+5. **Account for itself** — every crawl ends with a coverage report saying what resolved, what did
+   not, and what is not in ASSIST at all. A completeness claim you cannot check is worse than none.
 
 Everything runs locally against public, unclassified, Distribution Statement A material.
+
+**The success criterion is completeness**: the bounded, checkable set of standards a document
+actually depends on. Currency ("you cite Rev F, current is H(1)") is the highest-value byproduct.
+The graph is the navigation surface over both, not an end in itself.
+
+### On revisions — read this before trusting the tool
+
+A document's Section 2 typically reads: *"the issues of these documents are those cited in the
+solicitation or contract."* **Neither the citing document nor ASSIST is the authority on which
+revision applies — the contract is, and this tool cannot see your contract.**
+
+So the tool never silently picks a revision for you. It downloads the **current** revision by
+default, records the **cited** revision on every citation edge, flags divergence visibly, and lets
+you fetch the cited revision in one click or **pin** a known revision on the root. Completeness here
+is a claim about *the set of documents*, never about which revision binds you.
 
 ## 3. Users and the jobs they hire this for
 
@@ -55,20 +74,33 @@ Everything runs locally against public, unclassified, Distribution Statement A m
 - **F3 — Reference extraction.** Parse the PDF and identify every cited standard, distinguishing
   *binding* references (Section 2, Applicable Documents) from incidental body mentions, and
   ASSIST-hosted documents from external ones (ASTM, SAE, ISO, ANSI, STANAG, DoDI).
-- **F4 — Recursive crawl.** Breadth-first, depth- and count-limited, resumable, rate-limited,
-  pausable, with live progress.
+- **F4 — Recursive crawl.** Breadth-first, resumable, rate-limited, pausable, with live progress.
+  **Defaults to one level, cap 25.** Depth 2 is a deliberate choice behind a warning and a live
+  document count; going deeper is normally done by expanding one node at a time from the graph.
 - **F5 — Citation graph.** Interactive, filterable, multiple layouts, click-to-navigate, with the
-  graph and PDF viewer side by side.
+  graph and PDF viewer side by side. Expanding a node one level is a first-class action, not a
+  fallback for a crawl that stopped early.
+- **F5a — Manual PDF import.** A watched folder and drag-and-drop, with identical extraction,
+  graphing, and search. Documents are identified by parsing the ID from the PDF's own page-1 header
+  rather than the filename, falling back to asking when ambiguous. Provenance is recorded as
+  `manual` rather than `assist`.
+
+  This is a co-equal path, not a fallback. It independently covers restricted-distribution documents
+  the tool must never fetch, legacy specs sourced elsewhere, and the day ASSIST changes its markup.
 
 ### 4.2 Necessary supporting features (not requested, but the tool is not usable without them)
 
-- **F6 — Revision and staleness awareness.** ASSIST search returns a revision label (`H(1)`) and
-  documents cite specific revisions. Surfacing "this document cites MIL-STD-810F; current is H(1)"
-  is arguably the highest-value output of the whole system, and it falls out of the data model for
-  almost free.
-- **F7 — Resolution & coverage reporting.** Extraction is heuristic. Every crawl produces an explicit
-  account of what resolved, what was ambiguous, what is external, and what failed — with one-click
-  manual resolution. Without this the graph is a black box no engineer will trust.
+- **F6 — Revision awareness and staleness.** Every citation edge records the revision it names; every
+  document records its current revision. Divergence ("cites MIL-STD-810F, current is H(1)") is drawn
+  in the graph, not buried in a report, and is the highest-value output of the system. Includes
+  one-click fetch of a cited historical revision, and **revision pinning** on the root for when the
+  governing contract revision is known. See the revisions note in §2 — the tool reports, it does not
+  adjudicate.
+- **F7 — Resolution & coverage reporting. Part of the MVP, not a later nicety.** Extraction is
+  heuristic. Every crawl produces an explicit account of what resolved, what was ambiguous, what is
+  external, and what failed — with one-click manual resolution. Since the product's whole claim is
+  *completeness*, an unfalsifiable claim is worse than no claim: this report is what makes it
+  checkable.
 - **F8 — External-document nodes.** Roughly a third of the references in a typical MIL-STD are
   non-government (ASTM, SAE, ISO). They cannot be downloaded, but they must appear in the graph or
   the dependency picture is misleadingly incomplete.
@@ -141,8 +173,14 @@ metadata, and the full test suite passes with zero network access.
 
 Full schema from ARCHITECTURE §3, migrations, library directory management, FTS5 index, settings.
 
+Also the **manual import path**: watched folder, ID detection from the PDF's page-1 header, provenance
+tagging. It lands here rather than late because everything downstream — extraction, graphing, search —
+must treat manual and fetched documents identically, and building it now prevents an ASSIST-shaped
+assumption leaking into those layers.
+
 **Done when:** fetching the same document twice reuses the cached PDF; the DB survives restart; a
-corrupted download is detected and re-fetched.
+corrupted download is detected and re-fetched; a PDF dropped in the watch folder is identified and
+registered with `provenance='manual'` without any network access.
 
 ---
 
@@ -162,21 +200,32 @@ produces exactly the expected reference set with no self-references and no water
 
 PyMuPDF text + word-box extraction, watermark/header/footer/TOC stripping, Section 2 location and
 category tracking, two-column ID↔title re-association via geometry, edge classification with
-confidence, `ref_spans` capture, ASSIST resolution with fuzzy title disambiguation, OCR fallback,
-and idempotent re-extraction.
+confidence, `ref_spans` capture, cited-revision capture on every edge, ASSIST resolution with fuzzy
+title disambiguation, and idempotent re-extraction.
+
+**OCR is not in this phase** — it moved to Phase 9. Modern documents carry a text layer (verified);
+a document without one is marked `needs_ocr`, still graphed from its metadata, and skipped. This
+keeps Tesseract off the critical path.
 
 **Done when:** golden-file tests over MIL-STD-129 and MIL-STD-962 pass; every extracted reference
-carries a page and rect that lands on the right text; re-extraction is byte-identical.
+carries a page and rect that lands on the right text, plus the revision it cited where one is named;
+re-extraction is byte-identical.
 
 ---
 
 ### Phase 5 — Crawl orchestrator + API *(3 days)*
 
-BFS crawler with the resumable `crawl_tasks` queue, cycle handling, pause/resume/cancel, and the full
-REST surface from ARCHITECTURE §7 including the SSE progress stream and the `/graph` endpoint.
+BFS crawler with the resumable `crawl_tasks` queue, cycle handling, pause/resume/cancel, single-node
+one-level expansion, and the full REST surface from ARCHITECTURE §7 including the SSE progress stream
+and the `/graph` endpoint.
 
-**Done when:** `POST /crawls {root: 'MIL-STD-129', depth_limit: 2}` completes, is interruptible and
-resumable across a server restart, and `/graph` returns a connected node/edge set that matches the DB.
+Also the **coverage report** (`/reports/coverage`), promoted here from Phase 7. The product claims
+completeness; the claim ships with the means to check it or it does not ship.
+
+**Done when:** `POST /crawls {root: 'MIL-STD-129'}` completes at the depth-1 default, is interruptible
+and resumable across a server restart, `/graph` returns a node/edge set matching the DB, expanding one
+node adds exactly its children, and the coverage report accounts for every extracted reference as
+resolved, ambiguous, external, or failed — with none silently dropped.
 
 ---
 
@@ -185,19 +234,26 @@ resumable across a server restart, and `/graph` returns a connected node/edge se
 Search and library screens; PDF viewer with text layer, jump-to-page-and-highlight, and the Section 2
 outline sidebar; the Cytoscape graph with the full encoding, layouts, filters, and interactions from
 ARCHITECTURE §8.2; the split-pane wiring so clicking an edge opens the citing PDF at the citation;
-the live crawl monitor.
+the live crawl monitor; the coverage report screen; and **staleness rendered on the graph itself** —
+edges whose cited revision trails the target's current revision are drawn distinctly, with the
+one-click fetch of the cited revision.
 
-**Done when:** a user types `MIL-STD-129`, starts a depth-2 crawl, watches it run, and clicks an edge
-to land on the highlighted citation in the source PDF. **This is the MVP.**
+**Done when:** a user types `MIL-STD-129`, runs the default depth-1 crawl, watches it run, clicks an
+edge to land on the highlighted citation in the source PDF, expands one node a level deeper from the
+graph, sees any stale citation marked without opening a report, and can open the coverage report to
+see exactly what the crawl could not resolve. **This is the MVP.**
 
 ---
 
-### Phase 7 — Trust features *(2 days)*
+### Phase 7 — Depth, search, and provenance *(2 days)*
 
-Coverage report with manual resolution, staleness report, corpus full-text search, path explanation.
+Corpus full-text search (FTS5), path explanation ("why is this document in my tree?"), revision
+pinning on the root, and the standalone staleness report across the whole library rather than one
+crawl. Manual resolution of ambiguous IDs from the coverage report.
 
 **Done when:** every unresolved reference from a real crawl is either resolvable in two clicks or
-correctly classified as not-in-ASSIST.
+correctly classified as not-in-ASSIST; a pinned root revision changes which revision the tool treats
+as governing throughout the tree.
 
 ---
 
@@ -208,10 +264,12 @@ collections, annotations.
 
 ---
 
-### Phase 9 — Update monitoring & polish *(2 days)*
+### Phase 9 — OCR, update monitoring & polish *(2 days)*
 
-Scheduled re-check, "what changed" report, keyboard navigation, accessibility pass, empty and error
-states, first-run onboarding, packaging.
+**OCR fallback** (`ocrmypdf` + Tesseract, optional dependency) for scanned legacy specs marked
+`needs_ocr` in Phase 4. Scheduled re-check against ASSIST, "what changed" report — no more than daily,
+since ASSIST itself updates nightly on business days. Keyboard navigation, accessibility pass, empty
+and error states, first-run onboarding, packaging.
 
 ---
 
@@ -221,6 +279,11 @@ Text-level diff between two revisions of the same document.
 
 **Estimated MVP (Phases 0–6): ~16 working days. Full scope: ~24.**
 
+The MVP total is unchanged after the 2026-08-29 design review: OCR leaving the critical path (Phase 4
+→ 9) roughly pays for manual import arriving (Phase 2) and coverage reporting moving forward (Phase 7
+→ 5). What changed is *what you get at the end of it* — a shallower default crawl, an auditable
+completeness claim, and revision divergence visible on the graph.
+
 ## 6. Risks
 
 | Risk | Impact | Mitigation |
@@ -229,7 +292,8 @@ Text-level diff between two revisions of the same document.
 | **WAF blocks the client** | High | Conservative rate limits, honest identification, backoff + session reset, clear user-facing failure. No evasion — if DLA does not want automated access, the tool stops. |
 | **Extraction misses or invents references** | High — silently wrong graph | Confidence scores, binding-vs-informational split, the coverage report as a permanent visible check, golden-file tests |
 | **Legacy scanned PDFs have no text layer** | Medium | OCR fallback; documents still graphed from metadata; `needs_ocr` state is visible, not silent |
-| **Combinatorial explosion at depth ≥ 3** | Medium | Hard caps, live estimates, binding-only default, on-demand one-level expansion instead of full crawl |
+| **Combinatorial explosion at depth ≥ 2** | Medium | Depth-1 default, cap 25, live estimates, binding-only default, on-demand one-level expansion as the normal path |
+| **User trusts a revision the tool never claimed was governing** | High — silently wrong compliance work | The tool reports cited vs. current and never adjudicates; divergence is drawn on the graph; §2 states the limit in the plan itself |
 | **Ambiguous document IDs** | Medium | Fuzzy title match against the title recovered from Section 2; manual resolution queue |
 | **Very large PDFs (MIL-STD-810 ≈ 100 MB)** | Low | Streaming downloads, size caps, disk pre-flight |
 
@@ -248,12 +312,13 @@ requirements, not preferences:
 - The export report reminds the user that ASSIST is the authoritative source and that local copies
   can go stale — the same warning DLA stamps on every page.
 
-## 8. Decisions made for you
+## 8. Decisions settled
 
-Flag any of these you want changed before code generation starts.
+Reviewed and confirmed in a design interview on 2026-08-29. Items 8–12 came out of that session and
+changed the plan; the rest were confirmed as originally proposed.
 
-1. **Local-first single-user desktop-style web app**, not a hosted service. Avoids auth, quotas, and
-   storage abstraction that buy nothing today.
+1. **Local-first single-user desktop-style web app**, not a hosted service. Explicitly designed
+   *against* multi-user until someone asks. Avoids auth, quotas, and storage abstraction.
 2. **Python backend, TypeScript frontend.** PyMuPDF's word-level geometry is what makes
    click-an-edge-and-highlight-the-citation possible; the JS PDF ecosystem is materially weaker here.
 3. **Cytoscape.js over React Flow** for the graph — better at scale and at automatic layout, which
@@ -265,7 +330,27 @@ Flag any of these you want changed before code generation starts.
    explodes the tree.
 6. **External standards are graphed but never fetched.** ASTM/SAE/ISO are paywalled by their
    publishers; the tool shows the dependency and stops there.
-7. **Default crawl depth 2, cap 100 documents.** Raisable, but the defaults should be safe.
+7. **Completeness is the success criterion**, currency the highest-value byproduct, the graph the
+   navigation surface over both. Not comprehension-for-its-own-sake, not a staleness monitor.
+8. **Default crawl depth 1, cap 25** — changed from depth 2 / cap 100. Depth 1 answers "what does
+   this document directly require" in about two minutes, which is the common question. Depth 2 is
+   behind a warning and a live count; expanding one node at a time is the normal way deeper.
+   *Caveat: based on one measurement (MIL-STD-129 cited ~6 resolvable documents), not a survey. If
+   real documents prove denser, revisit.*
+9. **The tool never picks a revision for you.** Current by default, cited revision recorded on every
+   edge, divergence drawn on the graph, one-click fetch of the cited revision, pinning on the root.
+   Driven by a domain fact: Section 2 defers to "the issues cited in the solicitation or contract",
+   so the contract governs and the tool cannot see it. See §2.
+10. **Manual PDF import is a co-equal path**, in Phase 2, not a fallback. Also covers restricted
+    documents, externally sourced legacy specs, and ASSIST markup changes.
+11. **Coverage reporting is MVP scope** (Phase 5), not a later trust feature. A completeness claim
+    ships with the means to falsify it or it does not ship.
+12. **OCR is post-MVP** (Phase 9, was Phase 4). Modern documents have text layers; scanned ones are
+    marked `needs_ocr` and still graphed from metadata. Keeps Tesseract off the critical path.
+13. **Automated access proceeds** under the conservative limits in ASSIST-PROTOCOL §8. There is no
+    published API, no bulk product, no terms-of-use page, and no stated rate limit — only a generic
+    CFAA banner. Public unauthenticated documents fetched slowly and identified honestly are within
+    normal use; the manual-import path (item 10) exists so the tool degrades rather than escalates.
 
 ## 9. Possible later milestones
 

@@ -27,6 +27,13 @@ frontend/dist/
 .env.*
 !.env.example
 
+# Agent skills — installed via `npx skills@latest add <source>`.
+# Skill content is third-party and reproducible from skills-lock.json, so it is
+# not vendored here. .claude/skills holds symlinks into .agents/skills, which do
+# not travel across machines. skills-lock.json IS tracked.
+.agents/
+.claude/skills/
+
 # Editors / OS
 .vscode/
 .idea/

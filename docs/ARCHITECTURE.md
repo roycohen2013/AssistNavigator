@@ -76,6 +76,8 @@ documents (
   preparing_activity TEXT,
   lead_std_activity TEXT,
   custodians_json   TEXT,
+  pinned_revision   TEXT,  -- user-declared governing revision (from a contract); NULL = use current
+
   is_external       INTEGER NOT NULL DEFAULT 0,  -- ASTM/SAE/ISO/ANSI/STANAG/DoDI etc.
   external_body     TEXT,                        -- 'ASTM', 'SAE', 'ISO', 'NATO', 'DoD', ...
   resolution_state  TEXT NOT NULL,  -- unresolved | resolved | ambiguous | not_in_assist | failed
@@ -88,7 +90,7 @@ documents (
 revisions (
   id            INTEGER PK,
   document_id   INTEGER NOT NULL REFERENCES documents(id),
-  dmxid         INTEGER NOT NULL,          -- ASSIST download token
+  dmxid         INTEGER,                   -- ASSIST download token; NULL for manual imports
   revision_label TEXT,                     -- 'D Change 3'
   doc_date      TEXT,
   is_current    INTEGER NOT NULL DEFAULT 0,
@@ -99,6 +101,9 @@ revisions (
   page_count    INTEGER,
   has_text_layer INTEGER,
   ocr_applied   INTEGER NOT NULL DEFAULT 0,
+  needs_ocr     INTEGER NOT NULL DEFAULT 0,  -- no text layer, OCR unavailable or deferred
+  provenance    TEXT NOT NULL DEFAULT 'assist',  -- assist | manual
+  source_note   TEXT,                        -- for manual imports: original filename / where from
   downloaded_at TEXT,
   extracted_at  TEXT,
   UNIQUE(document_id, dmxid)
@@ -277,9 +282,16 @@ rebuilds that revision's refs, so the grammar can be improved without re-downloa
                     if ref.is_external and not include_external: skip
                     enqueue(ref.dst, d+1)
 
-**Defaults:** `depth_limit=2`, `max_docs=100`, `binding_only=true`, `include_external=false`.
-Depth 2 from a typical MIL-STD is already tens of documents and hundreds of megabytes; the UI must
-show a live estimate and let the user stop.
+**Defaults:** `depth_limit=1`, `max_docs=25`, `binding_only=true`, `include_external=false`.
+
+Depth 1 answers "what does this document directly require" in roughly two minutes and is the common
+case. Depth 2 is plausibly 40–60 documents, 300–500 MB, and 15–30 minutes of rate-limited crawling —
+extrapolated from one measurement (MIL-STD-129 cited ~6 ASSIST-resolvable documents), so treat it as
+an estimate. Selecting depth 2 requires confirming a warning that shows a live document count.
+
+**One-level expansion is the primary way to go deeper**, not a consolation prize for a crawl that
+stopped early: `POST /crawls/{id}/expand {document_id}` enqueues exactly that node's unvisited
+children at `depth+1`. The graph shows a `+N` badge on any node with unexpanded children.
 
 **Guarantees:**
 - Every task is a `crawl_tasks` row, so a crash or restart resumes exactly where it left off.
@@ -289,12 +301,28 @@ show a live estimate and let the user stop.
 - All network calls go through the single rate-limited client (ASSIST-PROTOCOL §8).
 - Per-task failures are recorded and skipped, never fatal to the job.
 
-### 6.4 OCR fallback
+### 6.4 OCR fallback — Phase 9, not MVP
 
-If `has_text_layer` is false and `ocrmypdf` is installed: run `ocrmypdf --skip-text --optimize 0`
-into a sidecar file, set `ocr_applied=1`, then extract normally. If Tesseract is absent, mark the
-revision `needs_ocr` and show a one-line banner in the UI explaining how to enable it. OCR must never
-be a hard install requirement.
+Through the MVP, a revision with no text layer is marked `needs_ocr=1`, still graphed from its ASSIST
+metadata, and skipped by extraction. It is visible in the coverage report, never silently dropped.
+
+From Phase 9, if `ocrmypdf` is installed: run `ocrmypdf --skip-text --optimize 0` into a sidecar file,
+set `ocr_applied=1`, then extract normally. If Tesseract is absent, keep `needs_ocr` and show a
+one-line banner explaining how to enable it. OCR must never be a hard install requirement.
+
+### 6.5 Manual import (Phase 2)
+
+A watched folder (`<library>/inbox/`) plus drag-and-drop in the UI. For each PDF:
+
+1. Extract page-1 text and match the document ID from the header against the §4 grammar. **Never
+   trust the filename** — real-world copies are named `mil-std-810h (1).pdf` or `scan0043.pdf`.
+2. Resolve the ID against `documents`, or against ASSIST if online; if ambiguous or unmatched, queue
+   it for the user to identify rather than guessing.
+3. Register a `revisions` row with `provenance='manual'`, `dmxid=NULL`, `source_note` = original
+   filename, then run the normal extraction pipeline.
+
+Everything downstream — extraction, graph, FTS, reports — treats manual and fetched revisions
+identically. Nothing outside this module may assume a revision came from ASSIST.
 
 ## 7. HTTP API
 
@@ -310,9 +338,19 @@ All under `/api`. FastAPI generates OpenAPI; the frontend client is generated fr
 - `POST /documents/{id}/resolve` — body `{ident_number}`, manual fix for an ambiguous ID
 
 **Crawl**
-- `POST /crawls` — body `{root, depth_limit, max_docs, binding_only, include_external}`
+- `POST /crawls` — body `{root, depth_limit=1, max_docs=25, binding_only, include_external}`
 - `GET  /crawls/{id}` / `POST /crawls/{id}/pause|resume|cancel`
+- `POST /crawls/{id}/expand` — body `{document_id}`, enqueue one node's children at `depth+1`
 - `GET  /crawls/{id}/events` — **SSE** stream of `{task, state, progress, stats}`
+
+**Import**
+- `POST /import` — multipart upload of one or more PDFs; returns per-file identification results
+- `GET  /import/pending` — files whose document ID could not be determined
+- `POST /import/pending/{id}/identify` — body `{canonical_id}`, resolve one manually
+
+**Revisions**
+- `POST /documents/{id}/pin` — body `{revision}`, declare the governing revision from a contract
+- `POST /refs/{id}/fetch-cited` — download the specific revision this edge names
 
 **Graph**
 - `GET /graph?root=&depth=&kinds=&status=&include_external=&limit=`
@@ -345,11 +383,17 @@ core interaction — clicking in the graph drives the viewer.
 
 **Encoding**
 - Node fill by status: Active green, Inactive amber, Canceled/Withdrawn red, External grey.
-- Node border: solid = PDF downloaded locally, dashed = known but not downloaded.
+- Node border: solid = PDF downloaded locally, dashed = known but not downloaded, dotted = imported
+  manually.
+- A node with unexpanded children carries a `+N` badge; clicking it expands one level.
 - Node size scaled by in-degree (how many documents depend on it).
 - Edge style: solid = `binding`, dotted = `informational`, double-line = `supersession`.
-- Edge colour: red when `cited_revision` is behind the target's `current_revision` (staleness is a
-  first-class visual, not a buried report).
+- Edge colour: red when `cited_revision` is behind the target's `current_revision` (or behind the
+  target's `pinned_revision` where one is set). Staleness is a first-class visual, not a buried
+  report — it is the highest-value output of the system. Clicking a stale edge offers "fetch the
+  cited revision" alongside the jump-to-citation action.
+- The graph never asserts which revision governs. A stale edge means "these differ", not "you are
+  wrong" — the contract decides, and the tool cannot see it.
 - The root node is visually pinned and larger.
 
 **Layouts:** hierarchical by crawl depth (default), `fcose` force-directed, radial-from-root.

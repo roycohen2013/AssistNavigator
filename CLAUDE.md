@@ -17,9 +17,10 @@ until it passes.
         assist/        HTTP client, parsers, rate limiter   (Phase 1)
         store/         SQLAlchemy models, migrations, library  (Phase 2)
         docid/         ID grammar, normalisation, classification  (Phase 3)
-        extract/       PDF text/geometry, Section 2, refs, OCR  (Phase 4)
-        crawl/         BFS orchestrator, task queue  (Phase 5)
+        extract/       PDF text/geometry, Section 2, refs  (Phase 4; OCR lands in Phase 9)
+        crawl/         BFS orchestrator, task queue, coverage report  (Phase 5)
         api/           FastAPI routers, SSE  (Phase 5)
+        import/        watch folder, header identification, ingest  (Phase 6)
         cli.py
       tests/
         cassettes/     respx recordings — never hit the network in tests
@@ -36,7 +37,14 @@ until it passes.
 - **Never persist `/Transient/*.pdf` URLs** — they are one-shot.
 - **Never hash raw PDF bytes for identity** — ASSIST watermarks each download with a timestamp.
   Identity is `(ident_number, dmxid)`; use `text_sha256` for content comparison.
-- **Never discard a reference silently.** Unresolved references go to the coverage report.
+- **Never discard a reference silently.** Unresolved references go to the coverage report, and its
+  buckets must sum to the total references seen. An unclassifiable reference is a bug.
+- **Never discard an imported file silently.** Every file offered to the importer gets an `imports`
+  row before anything else happens, whatever the outcome.
+- **Nothing below the library layer may assume a document came from ASSIST.** Crawl and manual
+  import are co-equal paths; `revisions.dmxid` is nullable and extraction never reads
+  `revisions.source`.
+- **Identify imported PDFs from the page-1 header, never the filename.**
 - No authentication, no CAC, no restricted-distribution documents, no WAF evasion.
 
 ## Agent skills

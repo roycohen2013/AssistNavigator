@@ -39,6 +39,23 @@ until it passes.
 - **Never discard a reference silently.** Unresolved references go to the coverage report.
 - No authentication, no CAC, no restricted-distribution documents, no WAF evasion.
 
+## Agent skills
+
+### Issue tracker
+
+Issues live in GitHub Issues for `roycohen2013/AssistNavigator`, via the `gh` CLI. See
+`docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+The five canonical roles, unchanged: `needs-triage`, `needs-info`, `ready-for-agent`,
+`ready-for-human`, `wontfix`. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: `CONTEXT.md` and `docs/adr/` at the repo root, created lazily rather than
+up front. See `docs/agents/domain.md`.
+
 ## Style
 
 - Python 3.12, full type annotations, `ruff` + `mypy --strict` clean.
